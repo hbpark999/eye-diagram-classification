@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import os
+import zipfile  # Added for handling ZIP file extraction
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
@@ -16,30 +17,17 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Dataset class definition
 class EyeDiagramDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
+    def __init__(self, image_files, transform=None):  # Modified to accept file list instead of directory
+        self.image_files = image_files
         self.transform = transform
         self.classes = ['crosstalk', 'Loss and ISI', 'reflection']
-        self.class_to_idx = {cls_name: i for i, cls_name in enumerate(self.classes)}
-        self.images = []
-        self.labels = []
-
-        for class_name in self.classes:
-            class_dir = os.path.join(root_dir, class_name)
-            if not os.path.isdir(class_dir):
-                raise ValueError(f"Class directory not found: {class_dir}")
-            for img_name in os.listdir(class_dir):
-                self.images.append(os.path.join(class_dir, img_name))
-                self.labels.append(self.class_to_idx[class_name])
-
-        print(f"Classes found: {self.classes}")
-        print(f"Number of images per class: {[self.labels.count(i) for i in range(len(self.classes))]}")
+        self.labels = [self.get_label_from_filename(f) for f in self.image_files]  # Assign labels based on file names
 
     def __len__(self):
-        return len(self.images)
+        return len(self.image_files)
 
     def __getitem__(self, idx):
-        img_path = self.images[idx]
+        img_path = self.image_files[idx]
         image = Image.open(img_path).convert('RGB')
         label = self.labels[idx]
 
@@ -47,6 +35,17 @@ class EyeDiagramDataset(Dataset):
             image = self.transform(image)
 
         return image, label
+
+    def get_label_from_filename(self, filename):  # This function extracts the class label from the filename
+        # Modify this mapping logic based on how your filenames are structured
+        if "crosstalk" in filename:
+            return 0
+        elif "Loss and ISI" in filename:
+            return 1
+        elif "reflection" in filename:
+            return 2
+        else:
+            raise ValueError(f"Unrecognized class in file: {filename}")
 
 # Data transformation definition
 data_transform = transforms.Compose([
@@ -187,15 +186,26 @@ def predict_image(model, image, class_names):
 
 # Streamlit app
 def main():
-    st.title("Eye Diagram Classifier")
+    st.title("Eye Diagram Classifier (ZIP Upload)")
 
-    # Input paths for training and validation data
-    train_dir = st.text_input("Enter the path to the training data directory:")
-    val_dir = st.text_input("Enter the path to the validation data directory:")
+    # Upload ZIP files instead of directory paths
+    train_zip = st.file_uploader("Upload training data (ZIP file)", type="zip")  # Modified to handle ZIP file upload
+    val_zip = st.file_uploader("Upload validation data (ZIP file)", type="zip")  # Modified to handle ZIP file upload
 
-    if train_dir and val_dir:
-        train_dataset = EyeDiagramDataset(train_dir, transform=data_transform)
-        val_dataset = EyeDiagramDataset(val_dir, transform=data_transform)
+    if train_zip and val_zip:
+        # Extract training ZIP
+        with zipfile.ZipFile(train_zip, 'r') as zip_ref:
+            zip_ref.extractall("/tmp/train_data")
+        train_files = [os.path.join("/tmp/train_data", f) for f in os.listdir("/tmp/train_data") if f.endswith(('jpg', 'png', 'jpeg'))]
+
+        # Extract validation ZIP
+        with zipfile.ZipFile(val_zip, 'r') as zip_ref:
+            zip_ref.extractall("/tmp/val_data")
+        val_files = [os.path.join("/tmp/val_data", f) for f in os.listdir("/tmp/val_data") if f.endswith(('jpg', 'png', 'jpeg'))]
+
+        # Create datasets and dataloaders
+        train_dataset = EyeDiagramDataset(train_files, transform=data_transform)
+        val_dataset = EyeDiagramDataset(val_files, transform=data_transform)
 
         train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
